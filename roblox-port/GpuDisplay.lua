@@ -26,6 +26,7 @@ function GpuDisplay.new(width: number, height: number, opts: { [string]: any }?)
 	self._pixelRefreshFull = opts.pixelRefreshFull == true
 	self._sharpBlocks = opts.pixelSharpBlocks ~= false
 	self._fullscreen = opts.fullscreen ~= false
+	self._topInset = math.max(0, math.floor(opts.topInset or 0))
 	self._gui = nil
 	self._imageLabel = nil
 	self._editable = nil
@@ -192,6 +193,14 @@ end
 
 function GpuDisplay:mount()
 	local pg = Players.LocalPlayer:WaitForChild("PlayerGui")
+	local existing = pg:FindFirstChild("HttpGpuScreen")
+	if existing then
+		existing:Destroy()
+	end
+	if self._gui then
+		self._gui:Destroy()
+		self._gui = nil
+	end
 
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "HttpGpuScreen"
@@ -212,9 +221,15 @@ function GpuDisplay:mount()
 	holder.BackgroundColor3 = Color3.new(0, 0, 0)
 	holder.BorderSizePixel = 0
 	holder.ClipsDescendants = true
-	holder.AnchorPoint = Vector2.new(0.5, 0.5)
-	holder.Position = UDim2.fromScale(0.5, 0.5)
-	holder.Size = if self._fullscreen then UDim2.fromScale(1, 1) else UDim2.fromOffset(self._w, self._h)
+	if self._fullscreen and self._topInset > 0 then
+		holder.AnchorPoint = Vector2.new(0, 0)
+		holder.Position = UDim2.fromOffset(0, self._topInset)
+		holder.Size = UDim2.new(1, 0, 1, -self._topInset)
+	else
+		holder.AnchorPoint = Vector2.new(0.5, 0.5)
+		holder.Position = UDim2.fromScale(0.5, 0.5)
+		holder.Size = if self._fullscreen then UDim2.fromScale(1, 1) else UDim2.fromOffset(self._w, self._h)
+	end
 	holder.Parent = root
 
 	local img = Instance.new("ImageLabel")

@@ -18,8 +18,8 @@ keyboard and mouse back to the game. Everything runs locally; Roblox Studio only
 2. Double-click **`start_server.bat`**. The first run installs the Python packages (about a minute).
    Leave the window open; it says `Serving ...` when ready.
 3. Open the place in Roblox Studio and press **Play**.
-4. In the game: **Enter** = Story mode, **Space** = Sandbox. Click the screen to capture the mouse,
-   **Esc** releases it. WASD / mouse / arrows / Enter / Space are forwarded to the game.
+4. You get an **Apps** desktop — pick **Browser** (web browsing + URL bar) or **GTA V** (the game stream).
+   **← Apps** returns to the launcher. In GTA, click to capture the mouse, **Esc** releases it.
 
 Game sound plays through the PC's default speakers/headset (it comes from the hidden Edge window, so it shows up as
 "Microsoft Edge" in the Windows volume mixer if you want to adjust or mute it).

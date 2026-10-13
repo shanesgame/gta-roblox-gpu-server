@@ -30,6 +30,7 @@ local function enableCharacter()
 	end
 end
 
+-- HTTP GPU mode: no GTA loading screen / auto-start — AppLauncherClient shows the desktop.
 if GpuConfig.ENABLED then
 	gameReady.OnClientEvent:Connect(function()
 		local char = Players.LocalPlayer.Character
@@ -45,9 +46,6 @@ if GpuConfig.ENABLED then
 		end)
 	end)
 	clientReady:FireServer()
-	task.defer(function()
-		setMode:FireServer(1)
-	end)
 	return
 end
 

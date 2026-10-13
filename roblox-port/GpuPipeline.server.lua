@@ -11,6 +11,7 @@ end)
 local folder = ReplicatedStorage:WaitForChild("GTA_WebPort")
 local Config = require(folder:WaitForChild("GpuConfig"))
 local InputQueue = require(folder:WaitForChild("GpuInputQueue"))
+local Session = require(folder:WaitForChild("GpuSession"))
 
 local remotes = folder:FindFirstChild("Remotes") or Instance.new("Folder")
 remotes.Name = "Remotes"
@@ -43,9 +44,9 @@ local function isRateLimit(err: string): boolean
 		or string.find(lower, "too many", 1, true) ~= nil
 end
 
-local function fetchFrame(seq: number, events: { any }?): (buffer?, number?, number?, string?)
+local function fetchFrame(seq: number, sourceUrl: string, events: { any }?): (buffer?, number?, number?, string?)
 	local body = HttpService:JSONEncode({
-		url = Config.SOURCE_URL,
+		url = sourceUrl,
 		w = Config.WIDTH,
 		h = Config.HEIGHT,
 		t = seq,
@@ -104,6 +105,9 @@ local function deliver(seq: number, data: buffer?, w: number?, h: number?, err: 
 end
 
 local function startCapture()
+	if not Session.isActive() then
+		return
+	end
 	if inFlight >= maxInFlight then
 		return
 	end
@@ -114,13 +118,17 @@ local function startCapture()
 	if now - lastStart < minInterval then
 		return
 	end
+	local sourceUrl = Session.get().url
+	if typeof(sourceUrl) ~= "string" then
+		return
+	end
 	inFlight += 1
 	lastStart = now
 	frameSeq += 1
 	local seq = frameSeq
 	local events = InputQueue.take()
 	task.spawn(function()
-		local data, w, h, err = fetchFrame(seq, events)
+		local data, w, h, err = fetchFrame(seq, sourceUrl, events)
 		if err then
 			if isRateLimit(err) then
 				-- Budget refills over ~20–30 s; pause hard so we don't keep failing.

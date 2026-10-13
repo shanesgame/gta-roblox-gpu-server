@@ -144,6 +144,23 @@ local function beginLoadSession(player: Player)
 		return
 	end
 	st.sessionStarted = true
+
+	-- HTTP GPU: skip GTA probe / auto-start — the client shows the Apps launcher instead.
+	if GpuConfig.ENABLED then
+		st.ready = true
+		st.mode = 0
+		local char = player.Character
+		if char then
+			local hum = char:FindFirstChildOfClass("Humanoid")
+			if hum then
+				hum.WalkSpeed = 0
+				hum.JumpPower = 0
+			end
+		end
+		readyRemote:FireClient(player, { mode = 0, launcher = true })
+		return
+	end
+
 	sendProgress(player, { pct = 2, label = "Starting..." })
 	task.spawn(function()
 		EngineProbe.run(function(payload)

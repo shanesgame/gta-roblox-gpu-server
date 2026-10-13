@@ -12,14 +12,23 @@ from PIL import Image, ImageDraw, ImageFont
 from roblox_gpu.browser_capture import capture_url
 
 UA = "RobloxGpuBridge/1.0"
-ALLOWED_PREFIXES = (
-    "http://127.0.0.1:", "http://localhost:", "https://127.0.0.1:", "https://localhost:",
-    "https://gta.deloskiyt.pl/",  # the original site
-)
+from urllib.parse import urlparse
+
+# Browser app can open any http(s) page; block non-web schemes.
+_ALLOWED_SCHEMES = ("http", "https")
 
 
 def _allowed(url: str) -> bool:
-    return any(url.startswith(p) for p in ALLOWED_PREFIXES)
+    try:
+        p = urlparse(url)
+    except Exception:
+        return False
+    if p.scheme not in _ALLOWED_SCHEMES or not p.netloc:
+        return False
+    # Reject credentials-in-URL and empty hosts
+    if "@" in p.netloc and p.username:
+        return False
+    return True
 
 
 def _fetch(url: str, timeout: float = 25.0) -> Tuple[bytes, str]:
@@ -51,7 +60,7 @@ def _text_frame(title: str, subtitle: str, w: int, h: int, tick: int) -> bytes:
 
 def render_url_to_rgba(url: str, width: int, height: int, tick: int = 0) -> Tuple[bytes, int, int]:
     if not _allowed(url):
-        raise ValueError("URL must be localhost only")
+        raise ValueError("URL must be http(s)")
     # EditableImage tops out at 1024 per side
     width = max(32, min(1024, width))
     height = max(32, min(1024, height))

@@ -1,4 +1,4 @@
--- Forward keyboard/mouse to the headless browser via server -> POST /roblox-gpu/input
+-- Forward keyboard/mouse to the headless browser via server queue -> frame POST.
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -10,14 +10,21 @@ local InputMap = require(folder:WaitForChild("GpuInputMap"))
 
 local GpuInputClient = {}
 
-function GpuInputClient.start(remotes: Folder, streamW: number, streamH: number)
+function GpuInputClient.start(remotes: Folder, streamW: number, streamH: number, opts: { [string]: any }?)
+	opts = opts or {}
+	local allowPointerLock = opts.pointerLock ~= false
 	local gpuInput = remotes:WaitForChild("GpuInput")
 	local queue: { { [string]: any } } = {}
 	local pointerLocked = false
 	local pendingDx, pendingDy = 0, 0
 	local heldKeys: { [Enum.KeyCode]: boolean } = {}
+	local running = true
+	local conns: { RBXScriptConnection } = {}
 
 	local function push(ev: { [string]: any })
+		if not running then
+			return
+		end
 		table.insert(queue, ev)
 		if #queue > 180 then
 			table.remove(queue, 1)
@@ -53,7 +60,10 @@ function GpuInputClient.start(remotes: Folder, streamW: number, streamH: number)
 	if cam then
 		cam.CameraType = Enum.CameraType.Scriptable
 	end
-	RunService.RenderStepped:Connect(function()
+	table.insert(conns, RunService.RenderStepped:Connect(function()
+		if not running then
+			return
+		end
 		if cam and cam.Parent then
 			local pos = cam.CFrame.Position
 			cam.CFrame = CFrame.lookAt(pos, pos + Vector3.new(0, 0, -1))
@@ -63,10 +73,10 @@ function GpuInputClient.start(remotes: Folder, streamW: number, streamH: number)
 			pendingDx += d.X
 			pendingDy += d.Y
 		end
-	end)
+	end))
 
 	local function lockPointer()
-		if pointerLocked then
+		if not allowPointerLock or pointerLocked then
 			return
 		end
 		pointerLocked = true
@@ -108,7 +118,6 @@ function GpuInputClient.start(remotes: Folder, streamW: number, streamH: number)
 		return nx, ny
 	end
 
-	-- Polled below (Jump/Select can eat Space/Enter before InputBegan).
 	local pollKeys = {
 		Enum.KeyCode.Space,
 		Enum.KeyCode.Return,
@@ -127,8 +136,15 @@ function GpuInputClient.start(remotes: Folder, streamW: number, streamH: number)
 		pollSet[key] = true
 	end
 
-	UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	table.insert(conns, UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if not running then
+			return
+		end
 		if gameProcessed and input.UserInputType ~= Enum.UserInputType.Keyboard then
+			return
+		end
+		-- Don't steal typing from the URL bar / Roblox text boxes
+		if gameProcessed and UserInputService:GetFocusedTextBox() then
 			return
 		end
 		if input.UserInputType == Enum.UserInputType.Keyboard then
@@ -148,12 +164,21 @@ function GpuInputClient.start(remotes: Folder, streamW: number, streamH: number)
 		end
 		local btn = InputMap.mouseButton(input.UserInputType)
 		if btn ~= nil then
-			lockPointer()
+			if allowPointerLock then
+				lockPointer()
+			else
+				local nx, ny = mapMouseToStream(input.Position.X, input.Position.Y)
+				push({ type = "mousemove", locked = false, nx = nx, ny = ny })
+				push({ type = "focus" })
+			end
 			push({ type = "mousedown", button = btn })
 		end
-	end)
+	end))
 
-	UserInputService.InputEnded:Connect(function(input, _gameProcessed)
+	table.insert(conns, UserInputService.InputEnded:Connect(function(input, _gameProcessed)
+		if not running then
+			return
+		end
 		if input.UserInputType == Enum.UserInputType.Keyboard then
 			if pollSet[input.KeyCode] then
 				return
@@ -169,10 +194,10 @@ function GpuInputClient.start(remotes: Folder, streamW: number, streamH: number)
 		if btn ~= nil then
 			push({ type = "mouseup", button = btn })
 		end
-	end)
+	end))
 
-	UserInputService.InputChanged:Connect(function(input, gameProcessed)
-		if gameProcessed then
+	table.insert(conns, UserInputService.InputChanged:Connect(function(input, gameProcessed)
+		if not running or gameProcessed then
 			return
 		end
 		if input.UserInputType == Enum.UserInputType.MouseWheel then
@@ -186,39 +211,40 @@ function GpuInputClient.start(remotes: Folder, streamW: number, streamH: number)
 			local nx, ny = mapMouseToStream(input.Position.X, input.Position.Y)
 			push({ type = "mousemove", locked = false, nx = nx, ny = ny })
 		end
-	end)
+	end))
 
 	local polledDown: { [Enum.KeyCode]: boolean } = {}
-
 	task.spawn(function()
-		while true do
+		while running do
 			task.wait(1 / 30)
-			for _, key in pollKeys do
-				local down = UserInputService:IsKeyDown(key)
-				local was = polledDown[key] == true
-				if down ~= was then
-					local code = InputMap.browserCode(key)
-					if code then
-						if down then
-							heldKeys[key] = true
-							push({ type = "keydown", code = code })
-						else
-							heldKeys[key] = nil
-							push({ type = "keyup", code = code })
+			if not UserInputService:GetFocusedTextBox() then
+				for _, key in pollKeys do
+					local down = UserInputService:IsKeyDown(key)
+					local was = polledDown[key] == true
+					if down ~= was then
+						local code = InputMap.browserCode(key)
+						if code then
+							if down then
+								heldKeys[key] = true
+								push({ type = "keydown", code = code })
+							else
+								heldKeys[key] = nil
+								push({ type = "keyup", code = code })
+							end
 						end
 					end
+					polledDown[key] = down
 				end
-				polledDown[key] = down
-			end
-			if pointerLocked and (pendingDx ~= 0 or pendingDy ~= 0) then
-				push({
-					type = "mousemove",
-					locked = true,
-					dx = pendingDx,
-					dy = pendingDy,
-				})
-				pendingDx = 0
-				pendingDy = 0
+				if pointerLocked and (pendingDx ~= 0 or pendingDy ~= 0) then
+					push({
+						type = "mousemove",
+						locked = true,
+						dx = pendingDx,
+						dy = pendingDy,
+					})
+					pendingDx = 0
+					pendingDy = 0
+				end
 			end
 			if #queue > 0 then
 				local batch = queue
@@ -229,6 +255,24 @@ function GpuInputClient.start(remotes: Folder, streamW: number, streamH: number)
 	end)
 
 	push({ type = "focus" })
+
+	return {
+		stop = function()
+			if not running then
+				return
+			end
+			running = false
+			unlockPointer()
+			pcall(function()
+				ContextActionService:UnbindAction("HttpGpuSinkMove")
+			end)
+			for _, c in conns do
+				c:Disconnect()
+			end
+			table.clear(conns)
+			table.clear(queue)
+		end,
+	}
 end
 
 return GpuInputClient
