@@ -21,7 +21,11 @@ GPU_ARGS = [
 	# keep the capture browser lean: this PC is tight on RAM
 	"--disable-extensions", "--disable-background-networking", "--no-first-run", "--disable-sync",
 	"--disable-features=Translate,OptimizationHints,MediaRouter",
+	# game audio plays through this PC's speakers: WebAudio may start without a user gesture
+	"--autoplay-policy=no-user-gesture-required",
 ]
+# Playwright mutes headless browsers by default; drop that so the game's sound reaches the default output device.
+IGNORE_DEFAULT_ARGS = ["--mute-audio"]
 
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="roblox-gpu-chromium")
 _init_lock = threading.Lock()
@@ -52,13 +56,16 @@ def _ensure_browser_on_worker() -> None:
 		viewport={"width": CAPTURE_W, "height": CAPTURE_H},
 		ignore_https_errors=True,
 		accept_downloads=False,
+		ignore_default_args=IGNORE_DEFAULT_ARGS,
 	)
 	try:
 		_browser = _playwright.chromium.launch_persistent_context(str(PROFILE_DIR), channel="msedge", args=GPU_ARGS, **common)
-		print("[roblox-gpu] capture browser: Edge (GPU)")
+		print("[roblox-gpu] capture browser: Edge (GPU, audio on)")
 	except Exception as e:
 		print(f"[roblox-gpu] Edge unavailable ({e}); falling back to bundled Chromium (software rendering)")
-		_browser = _playwright.chromium.launch_persistent_context(str(PROFILE_DIR / "chromium"), **common)
+		_browser = _playwright.chromium.launch_persistent_context(
+			str(PROFILE_DIR / "chromium"), args=["--autoplay-policy=no-user-gesture-required"], **common
+		)
 	_browser.add_init_script(_SHIM_JS)
 	for p in list(_browser.pages):  # the profile opens a blank tab; we make our own
 		try:

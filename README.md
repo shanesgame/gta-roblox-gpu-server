@@ -21,6 +21,9 @@ keyboard and mouse back to the game. Everything runs locally; Roblox Studio only
 4. In the game: **Enter** = Story mode, **Space** = Sandbox. Click the screen to capture the mouse,
    **Esc** releases it. WASD / mouse / arrows / Enter / Space are forwarded to the game.
 
+Game sound plays through the PC's default speakers/headset (it comes from the hidden Edge window, so it shows up as
+"Microsoft Edge" in the Windows volume mixer if you want to adjust or mute it).
+
 The first load takes 1–3 minutes while the game downloads its data; after that it is cached in
 `.capture-profile\` next to the scripts, so later starts are much faster.
 
