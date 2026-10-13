@@ -1,0 +1,27 @@
+# runtime
+.capture-profile/
+__pycache__/
+*.pyc
+*.log
+*.part
+_test_frame*.png
+
+# local game mirror (multi-GB, fetched from the original site on demand)
+data/
+b/
+index.html
+index.raw.html
+scripts/
+download.*
+roblox-upload-urls.txt
+shader-packs.txt
+title-art.txt
+play_*.ps1
+
+# Studio push helpers / scratch
+roblox-port/*.push.luau
+roblox-port/push_parts/
+roblox-port/push_*
+roblox-port/split_push.py
+roblox-port/gen_config.py
+roblox-port/_*
