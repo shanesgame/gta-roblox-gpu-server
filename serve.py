@@ -58,7 +58,7 @@ class GameHandler(SimpleHTTPRequestHandler):
     def log_message(self, fmt: str, *args) -> None:
         if args and isinstance(args[0], str):
             p = args[0]
-            if p.startswith("GET /data/") or p.startswith("GET /roblox-gpu/") or p.startswith("POST /roblox-gpu/input"):
+            if p.startswith("GET /data/") or p.startswith("GET /roblox-gpu/") or p.startswith("POST /roblox-gpu/"):
                 return  # quiet hot path
         super().log_message(fmt, *args)
 
@@ -86,6 +86,11 @@ class GameHandler(SimpleHTTPRequestHandler):
             return
         if path == "/roblox-gpu/input":
             self._roblox_gpu_input()
+            return
+        if path == "/roblox-gpu/frame":
+            # One Roblox HTTP request: apply optional input events, then return the frame.
+            # Keeps the stream under Roblox's 500 HttpService requests/minute budget.
+            self._roblox_gpu_frame_post()
             return
         self.send_error(404)
 
@@ -195,10 +200,46 @@ class GameHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _roblox_gpu_frame_post(self) -> None:
+        import json
+
+        length = int(self.headers.get("Content-Length", 0))
+        if length <= 0 or length > 512_000:
+            self.send_error(400, "bad body")
+            return
+        try:
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self.send_error(400, "invalid json")
+            return
+        url = body.get("url")
+        if not isinstance(url, str):
+            self.send_error(400, "need url")
+            return
+        events = body.get("events")
+        if isinstance(events, list) and events:
+            if len(events) > 200:
+                events = events[-200:]
+            try:
+                from roblox_gpu.input_bridge import apply_input
+
+                apply_input(url, events)
+            except Exception as e:
+                self.send_error(500, f"input: {e}"[:200])
+                return
+        try:
+            w = int(body.get("w", 256))
+            h = int(body.get("h", 144))
+            tick = int(body.get("t", 0))
+            drop = int(body.get("q", 0) or 0)
+        except (TypeError, ValueError):
+            self.send_error(400, "bad w/h/t/q")
+            return
+        fmt = str(body.get("format") or "zstd").lower()
+        self._send_gpu_frame(url, w, h, tick, fmt, drop)
+
     def _roblox_gpu_frame(self, query: str) -> None:
         from urllib.parse import parse_qs
-
-        from roblox_gpu.render import render_url_to_rgba
 
         params = parse_qs(query)
         url = (params.get("url") or ["http://127.0.0.1:8765/"])[0]
@@ -206,9 +247,16 @@ class GameHandler(SimpleHTTPRequestHandler):
             w = int((params.get("w") or ["256"])[0])
             h = int((params.get("h") or ["144"])[0])
             tick = int((params.get("t") or ["0"])[0])
+            drop = int((params.get("q") or ["0"])[0] or 0)
         except ValueError:
             self.send_error(400, "bad w/h/t")
             return
+        fmt = (params.get("format") or ["raw"])[0].lower()
+        self._send_gpu_frame(url, w, h, tick, fmt, drop)
+
+    def _send_gpu_frame(self, url: str, w: int, h: int, tick: int, fmt: str, drop: int) -> None:
+        from roblox_gpu.render import render_url_to_rgba
+
         try:
             rgba, rw, rh = render_url_to_rgba(url, w, h, tick)
         except ValueError as e:
@@ -223,10 +271,9 @@ class GameHandler(SimpleHTTPRequestHandler):
             traceback.print_exc()
             self.send_error(500, str(e)[:200])
             return
-        fmt = (params.get("format") or ["raw"])[0].lower()
         if fmt == "zstd":
             try:
-                payload = _zstd_frame(rgba, int((params.get("q") or ["0"])[0] or 0))
+                payload = _zstd_frame(rgba, drop)
             except MemoryError:
                 self.send_error(503, "PC out of memory - close other apps (Discord, browser tabs, extra Cursor windows)")
                 return

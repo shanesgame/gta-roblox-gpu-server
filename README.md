@@ -48,7 +48,9 @@ Log of the last run: the `start_server.bat` window (also `serve.log` when starte
 
 `roblox-port/GpuConfig.lua` (inside the place under `ReplicatedStorage.GTA_WebPort.GpuConfig`) holds the
 stream settings: `SOURCE_URL` (original site or a local mirror), `WIDTH`/`HEIGHT` (max 1024 per side),
-`FPS`, and `COLOR_DROP_BITS` (bandwidth vs. colour depth).
+`FPS` (capped at 8 — Roblox allows only 500 HttpService requests/minute; higher FPS freezes every ~25 s),
+and `COLOR_DROP_BITS` (bandwidth vs. colour depth). Input is piggybacked on each frame POST so it does
+not burn a second request.
 
 ## What is in here
 

@@ -10,6 +10,7 @@ end)
 
 local folder = ReplicatedStorage:WaitForChild("GTA_WebPort")
 local Config = require(folder:WaitForChild("GpuConfig"))
+local InputQueue = require(folder:WaitForChild("GpuInputQueue"))
 
 local remotes = folder:FindFirstChild("Remotes") or Instance.new("Folder")
 remotes.Name = "Remotes"
@@ -24,27 +25,41 @@ end
 
 local frameSeq = 0
 local inFlight = 0
-local maxInFlight = math.max(1, Config.MAX_IN_FLIGHT or 1)
+-- One in-flight request: Roblox counts every HttpService call toward the 500/min budget.
+local maxInFlight = 1
 local chunkBytes = math.max(8000, Config.REMOTE_CHUNK_BYTES or 60000)
-local minInterval = 1 / math.max(1, Config.FPS)
+-- Cap at 8 fps (480/min) so we stay under Roblox's 500 HttpService requests/minute.
+local fps = math.clamp(Config.FPS or 8, 1, 8)
+local minInterval = 1 / fps
 local lastStart = 0
+local rateLimitedUntil = 0
 
-local function frameUrl(seq: number): string
-	local base = Config.HOST:gsub("/$", "")
-	return string.format(
-		"%s/roblox-gpu/frame?url=%s&w=%d&h=%d&t=%d&format=zstd&q=%d",
-		base,
-		HttpService:UrlEncode(Config.SOURCE_URL),
-		Config.WIDTH,
-		Config.HEIGHT,
-		seq,
-		Config.COLOR_DROP_BITS or 0
-	)
+local frameUrl = Config.HOST:gsub("/$", "") .. "/roblox-gpu/frame"
+
+local function isRateLimit(err: string): boolean
+	local lower = string.lower(err)
+	return string.find(lower, "exceeded", 1, true) ~= nil
+		or string.find(lower, "rate limit", 1, true) ~= nil
+		or string.find(lower, "too many", 1, true) ~= nil
 end
 
-local function fetchFrame(seq: number): (buffer?, number?, number?, string?)
+local function fetchFrame(seq: number, events: { any }?): (buffer?, number?, number?, string?)
+	local body = HttpService:JSONEncode({
+		url = Config.SOURCE_URL,
+		w = Config.WIDTH,
+		h = Config.HEIGHT,
+		t = seq,
+		format = "zstd",
+		q = Config.COLOR_DROP_BITS or 0,
+		events = events or {},
+	})
 	local ok, res = pcall(function()
-		return HttpService:RequestAsync({ Url = frameUrl(seq), Method = "GET" })
+		return HttpService:RequestAsync({
+			Url = frameUrl,
+			Method = "POST",
+			Headers = { ["Content-Type"] = "application/json" },
+			Body = body,
+		})
 	end)
 	if not ok then
 		return nil, nil, nil, tostring(res)
@@ -54,7 +69,6 @@ local function fetchFrame(seq: number): (buffer?, number?, number?, string?)
 		if res.StatusCode == 0 then
 			msg = "HTTP blocked — enable Allow HTTP Requests in Game Settings"
 		elseif typeof(res.Body) == "string" and #res.Body > 0 then
-			-- Python's send_error wraps the reason in HTML; pull out the "Message:" line
 			local reason = res.Body:match("Message:%s*([^<\n]+)") or res.Body:sub(1, 120)
 			msg ..= " · " .. reason
 		end
@@ -93,18 +107,29 @@ local function startCapture()
 	if inFlight >= maxInFlight then
 		return
 	end
-	if os.clock() - lastStart < minInterval then
+	local now = os.clock()
+	if now < rateLimitedUntil then
+		return
+	end
+	if now - lastStart < minInterval then
 		return
 	end
 	inFlight += 1
-	lastStart = os.clock()
+	lastStart = now
 	frameSeq += 1
 	local seq = frameSeq
+	local events = InputQueue.take()
 	task.spawn(function()
-		local data, w, h, err = fetchFrame(seq)
+		local data, w, h, err = fetchFrame(seq, events)
 		if err then
-			-- Don't hammer a struggling server (out of memory, restarting); retry in a second
-			lastStart = os.clock() + 1
+			if isRateLimit(err) then
+				-- Budget refills over ~20–30 s; pause hard so we don't keep failing.
+				rateLimitedUntil = os.clock() + 25
+				lastStart = rateLimitedUntil
+				err = "HTTP rate limit — pausing 25s (Roblox allows 500 req/min)"
+			else
+				lastStart = os.clock() + 1
+			end
 		end
 		inFlight -= 1
 		deliver(seq, data, w, h, err)
