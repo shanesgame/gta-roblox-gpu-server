@@ -13,7 +13,8 @@ from PIL import Image
 # Default viewport; the page is resized to the requested stream size so frames need no resampling.
 CAPTURE_W = 1024
 CAPTURE_H = 576
-JPEG_QUALITY = 92
+# Lower quality = much faster encode + smaller frames (big win under the 500 req/min budget)
+JPEG_QUALITY = 72
 
 # Playwright's bundled Chromium only gets SwiftShader (CPU) here; Edge's new headless mode uses the real GPU + WebGPU.
 GPU_ARGS = [
@@ -88,12 +89,13 @@ def _get_page(url: str, size: Optional[Tuple[int, int]] = None):
 		_cdp = _page.context.new_cdp_session(_page)
 		_page_url = None
 	if _page_url != url:
-		_page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+		# networkidle is too slow; commit is enough to start painting
+		_page.goto(url, wait_until="commit", timeout=45_000)
 		try:
-			_page.wait_for_selector("canvas, #game, body", timeout=6_000)
+			_page.wait_for_load_state("domcontentloaded", timeout=8_000)
 		except Exception:
 			pass
-		_page.wait_for_timeout(500)
+		_page.wait_for_timeout(150)
 		_page_url = url
 	return _page
 
@@ -130,7 +132,8 @@ def _capture_impl(url: str, width: int, height: int) -> Tuple[bytes, int, int]:
 		raise
 	img = Image.open(io.BytesIO(base64.b64decode(shot["data"]))).convert("RGBA")
 	if img.size != (width, height):
-		img = img.resize((width, height), Image.Resampling.LANCZOS)
+		# BILINEAR is far cheaper than LANCZOS and fine at stream sizes
+		img = img.resize((width, height), Image.Resampling.BILINEAR)
 	return img.tobytes(), width, height
 
 

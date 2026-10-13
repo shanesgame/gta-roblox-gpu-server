@@ -225,8 +225,8 @@ class GameHandler(SimpleHTTPRequestHandler):
 
                 apply_input(url, events)
             except Exception as e:
-                self.send_error(500, f"input: {e}"[:200])
-                return
+                # Clicks often navigate and tear down the JS context; still return a frame
+                print(f"[roblox-gpu] input skipped: {e}", file=sys.stderr)
         try:
             w = int(body.get("w", 256))
             h = int(body.get("h", 144))

@@ -18,12 +18,21 @@ function GpuInputClient.start(remotes: Folder, streamW: number, streamH: number,
 	local pointerLocked = false
 	local pendingDx, pendingDy = 0, 0
 	local heldKeys: { [Enum.KeyCode]: boolean } = {}
+	local mouseButtonsDown = 0
 	local running = true
 	local conns: { RBXScriptConnection } = {}
 
 	local function push(ev: { [string]: any })
 		if not running then
 			return
+		end
+		-- Coalesce consecutive absolute mouse moves (drag stays smooth, queue stays small)
+		if ev.type == "mousemove" and not ev.locked and #queue > 0 then
+			local last = queue[#queue]
+			if last.type == "mousemove" and not last.locked then
+				queue[#queue] = ev
+				return
+			end
 		end
 		table.insert(queue, ev)
 		if #queue > 180 then
@@ -164,14 +173,16 @@ function GpuInputClient.start(remotes: Folder, streamW: number, streamH: number,
 		end
 		local btn = InputMap.mouseButton(input.UserInputType)
 		if btn ~= nil then
+			local pos = UserInputService:GetMouseLocation()
+			local nx, ny = mapMouseToStream(pos.X, pos.Y)
 			if allowPointerLock then
 				lockPointer()
 			else
-				local nx, ny = mapMouseToStream(input.Position.X, input.Position.Y)
-				push({ type = "mousemove", locked = false, nx = nx, ny = ny })
 				push({ type = "focus" })
+				push({ type = "mousemove", locked = false, nx = nx, ny = ny })
 			end
-			push({ type = "mousedown", button = btn })
+			mouseButtonsDown += 1
+			push({ type = "mousedown", button = btn, nx = nx, ny = ny })
 		end
 	end))
 
@@ -192,7 +203,10 @@ function GpuInputClient.start(remotes: Folder, streamW: number, streamH: number,
 		end
 		local btn = InputMap.mouseButton(input.UserInputType)
 		if btn ~= nil then
-			push({ type = "mouseup", button = btn })
+			local pos = UserInputService:GetMouseLocation()
+			local nx, ny = mapMouseToStream(pos.X, pos.Y)
+			mouseButtonsDown = math.max(0, mouseButtonsDown - 1)
+			push({ type = "mouseup", button = btn, nx = nx, ny = ny })
 		end
 	end))
 
@@ -244,6 +258,11 @@ function GpuInputClient.start(remotes: Folder, streamW: number, streamH: number,
 					})
 					pendingDx = 0
 					pendingDy = 0
+				elseif not pointerLocked and mouseButtonsDown > 0 then
+					-- Keep sending positions while dragging (maps, sliders, text selection)
+					local pos = UserInputService:GetMouseLocation()
+					local nx, ny = mapMouseToStream(pos.X, pos.Y)
+					push({ type = "mousemove", locked = false, nx = nx, ny = ny })
 				end
 			end
 			if #queue > 0 then

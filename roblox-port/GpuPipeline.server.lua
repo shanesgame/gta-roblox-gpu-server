@@ -29,8 +29,8 @@ local inFlight = 0
 -- One in-flight request: Roblox counts every HttpService call toward the 500/min budget.
 local maxInFlight = 1
 local chunkBytes = math.max(8000, Config.REMOTE_CHUNK_BYTES or 60000)
--- Cap at 8 fps (480/min) so we stay under Roblox's 500 HttpService requests/minute.
-local fps = math.clamp(Config.FPS or 8, 1, 8)
+-- Soft cap 12: above ~8 may eventually hit Roblox's 500/min; we back off on rate-limit errors.
+local fps = math.clamp(Config.FPS or 10, 1, 12)
 local minInterval = 1 / fps
 local lastStart = 0
 local rateLimitedUntil = 0
@@ -131,12 +131,14 @@ local function startCapture()
 		local data, w, h, err = fetchFrame(seq, sourceUrl, events)
 		if err then
 			if isRateLimit(err) then
-				-- Budget refills over ~20–30 s; pause hard so we don't keep failing.
-				rateLimitedUntil = os.clock() + 25
+				-- Drop to a safe cadence after a hit so we don't freeze for half a minute.
+				fps = 7
+				minInterval = 1 / fps
+				rateLimitedUntil = os.clock() + 8
 				lastStart = rateLimitedUntil
-				err = "HTTP rate limit — pausing 25s (Roblox allows 500 req/min)"
+				err = "HTTP rate limit — slowing to 7 fps"
 			else
-				lastStart = os.clock() + 1
+				lastStart = os.clock() + 0.5
 			end
 		end
 		inFlight -= 1
